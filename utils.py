@@ -44,8 +44,8 @@ def load_yaml(path, default_path=None):
 
 
 def save_config(datadict, path):
-    datadict.training.ckpt_file = None
-    datadict.training.pop('exp_dir')
+    datadict['training']['ckpt_file'] = None
+    datadict['training'].pop('exp_dir')
     with open(path, 'w', encoding='utf8') as outfile:
         yaml.dump(datadict, outfile, default_flow_style=False)
 
