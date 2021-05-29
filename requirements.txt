@@ -8,5 +8,5 @@ imageio-ffmpeg
 scikit-image 
 tqdm 
 tensorboardX 
-"pytorch3d>=0.3.0" 
+pytorch3d>=0.3.0 
 opencv-python
