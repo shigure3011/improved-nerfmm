@@ -1,4 +1,5 @@
 import utils
+from metrics import *
 from logger import Logger
 from checkpoints import CheckpointIO
 from dataio.dataset import NeRFMMDataset
@@ -22,16 +23,6 @@ from torch import optim
 from torch.utils.data.dataloader import DataLoader
 
 
-
-def mse_loss(source, target, return_mse_img=False):
-    value = (source - target)**2
-    return torch.mean(value)
-
-
-def psnr(pred, gt):
-    return -10*torch.log10(mse_loss(pred, gt))
-
-
 class NeRFMinusMinusTrainer(nn.Module):
     def __init__(
             self,
@@ -43,6 +34,7 @@ class NeRFMinusMinusTrainer(nn.Module):
         self.model = model
         if perceptual_net is not None:
             self.perceptual_net = perceptual_net
+
 
     def forward(self,
                 args,
@@ -85,7 +77,7 @@ class NeRFMinusMinusTrainer(nn.Module):
         losses['total'] = loss
 
         with torch.no_grad():
-            losses['psnr'] = psnr(rgb, target_s)
+            losses['train/psnr'] = psnr(rgb, target_s)
 
         return OrderedDict(
             [('losses', losses),

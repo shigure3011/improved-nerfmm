@@ -6,7 +6,8 @@ addict
 imageio 
 imageio-ffmpeg 
 scikit-image 
-tqdm 
+tqdm
 tensorboardX 
 pytorch3d>=0.3.0 
 opencv-python
+lpips
