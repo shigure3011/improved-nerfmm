@@ -214,9 +214,14 @@ class SirenNeRF(nn.Module):
         # following_layers_w0 = 1.
 
         base_layers = [SirenLayer(input_ch_pts, W, use_bias=use_bias, w0=first_layer_w0, is_first=True)]
-        for _ in range(D-1):
-            base_layers.append(SirenLayer(W, W, use_bias=use_bias, w0=following_layers_w0))
         dim = W
+        for i in range(D):
+            if i == 0:
+                continue
+            base_layers.append(SirenLayer(dim, W, use_bias=use_bias, w0=following_layers_w0))
+            dim = W
+            if i in self.skips and i != (D-1):
+                dim += input_ch_pts
         self.base_layers = nn.Sequential(*base_layers)
 
         if self.net_branch_appearance:
@@ -248,8 +253,11 @@ class SirenNeRF(nn.Module):
             shape[-1] = 0
             input_views = input_pts.new_empty(shape)
 
-        base = input_pts
-        base = self.base_layers(input_pts)
+        base = self.base_layers[0](input_pts)
+        for i in range(len(self.base_layers)-1):
+            if i in self.skips:
+                base = torch.cat((input_pts, base), dim=-1)
+            base = self.base_layers[i+1](base)
 
         if self.net_branch_appearance:
             sigma: torch.Tensor = self.sigma_layers(base)
@@ -271,9 +279,11 @@ class SirenNeRF(nn.Module):
         return ret
 
     def query_sigma(self, input_pts: torch.Tensor):
-        base = input_pts
-        for layer in self.base_layers:
-            base = layer(base)
+        base = self.base_layers[0](input_pts)
+        for i in range(len(self.base_layers)-1):
+            if i in self.skips:
+                base = torch.cat((base, base), dim=-1)
+            base = self.base_layers[i+1](base)
 
         if self.net_branch_appearance:
             sigma = self.sigma_layers(base)

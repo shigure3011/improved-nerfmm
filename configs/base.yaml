@@ -15,20 +15,20 @@ data:
   far: 1.0
 
 model:
-  framework: NeRF     # options: [NeRF, SirenNeRF]
+  framework: NeRF     		# options: [NeRF, SirenNeRF]
 
   # nerf base
   perturb: 1.
   raw_noise_std: 1.
-  N_samples: 128      # number of points sampled for each ray, in volume rendering process.
-  N_importance: 0
+  N_samples: 64      		# number of points sampled for each ray, in volume rendering process.
+  N_importance: 128
   net_d: 8
   net_w: 256
   net_skips: [4]
   multires: 10
   multires_views: 4
-  use_viewdirs: true  # view dependence of NeRF
-  sigma_clamp_mode: relu  # [relu, softplus]
+  use_viewdirs: true  		# view dependence of NeRF
+  sigma_clamp_mode: relu  	# [relu, softplus]
   rayschunk: 131072
   val_rayschunk: 32768
   netchunk: 524288

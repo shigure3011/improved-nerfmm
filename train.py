@@ -17,18 +17,19 @@ from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+import torchvision
 from torch import optim
 from torch.utils.data.dataloader import DataLoader
 
 
 
 def mse_loss(source, target, return_mse_img=False):
-    mse = torch.mean((source - target) ** 2, dim=-1)
-    loss = mse.mean(dim=-1)
-    if return_mse_img:
-        return loss, mse
-    else:
-        return loss
+    value = (source - target)**2
+    return torch.mean(value)
+
+
+def psnr(pred, gt):
+    return -10*torch.log10(mse_loss(pred, gt))
 
 
 class NeRFMinusMinusTrainer(nn.Module):
@@ -64,7 +65,7 @@ class NeRFMinusMinusTrainer(nn.Module):
 
         # reconstruction loss
         # could be rendered as an mse image
-        losses['loss_img'], mse = mse_loss(rgb, target_s, True)
+        losses['loss_img'] = mse_loss(rgb, target_s)
         losses['loss_img'] *= args.training.w_img
 
         # perceptual loss
@@ -82,6 +83,9 @@ class NeRFMinusMinusTrainer(nn.Module):
         for v in losses.values():
             loss += v
         losses['total'] = loss
+
+        with torch.no_grad():
+            losses['psnr'] = psnr(rgb, target_s)
 
         return OrderedDict(
             [('losses', losses),
@@ -388,7 +392,7 @@ def main_function(args):
                         # [N_rays, 3], [N_rays, 3], [N_rays]
                         # when logging val images, scale the resolution to be 1/16 just to save time.
                         rays_o, rays_d, select_inds = get_rays(
-                            R, t, fx/4., fy/4., dataset.H//4, dataset.W//4, -1,
+                            R, t, fx, fy, dataset.H, dataset.W, -1,
                             representation=so3_representation)
 
                         # [N_rays, 3]
@@ -401,10 +405,11 @@ def main_function(args):
                             **render_kwargs_test)
 
                     to_img = functools.partial(
-                        utils.lin2img, H=dataset.H//4, W=dataset.W//4, batched=render_kwargs_test['batched'])
-
+                        utils.lin2img, H=dataset.H, W=dataset.W, batched=render_kwargs_test['batched'])
+                    
+                    logger.add('metrics', 'val/psnr', psnr(to_img(val_rgb), to_img(target_rgb)), it=it)
                     logger.add_imgs(to_img(val_rgb), 'val/pred', it)
-                    logger.add_imgs(utils.lin2img(target_rgb, H=dataset.H, W=dataset.W, batched=render_kwargs_test['batched']), 'val/gt', it)
+                    logger.add_imgs(to_img(target_rgb), 'val/gt', it)
                     logger.add_imgs(to_img(val_extras['disp_map'].unsqueeze(-1)), 'val/pred_disp', it)
                     logger.add_imgs(to_img(val_depth.unsqueeze(-1)), 'val/pred_depth', it)
                     logger.add_imgs(to_img(val_extras['acc_map'].unsqueeze(-1)), 'val/pred_acc', it)

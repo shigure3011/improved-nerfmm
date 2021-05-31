@@ -104,8 +104,8 @@ def create_model(
 
     fg_fine_kwargs = dict(
         D=args.model.setdefault('net_d_fine', 8),
-        W=args.model.setdefault('net_w_fine', 256),
-        skips=args.model.setdefault('net_skips_fine', 256),
+        W=args.model.setdefault('net_w_fine', 128),
+        skips=args.model.setdefault('net_skips_fine', 4),
         **extra_configs)
 
     model_kwargs = dict(
