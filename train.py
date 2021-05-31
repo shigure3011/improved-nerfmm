@@ -137,7 +137,7 @@ def main_function(args):
     dataset = NeRFMMDataset(args.data.data_dir, downscale=args.data.downscale)
     dataloader = DataLoader(dataset, 
         batch_size=args.data.get('batch_size', None), 
-        shuffle='true')
+        shuffle=True)
     valloader = copy.deepcopy(dataloader)
 
     # Camera parameters to optimize
