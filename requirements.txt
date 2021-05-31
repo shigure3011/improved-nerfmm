@@ -11,3 +11,4 @@ tensorboardX
 pytorch3d>=0.3.0 
 opencv-python
 lpips
+kornia==0.2.0

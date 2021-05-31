@@ -15,7 +15,7 @@ data:
   far: 1.0
 
 model:
-  framework: NeRF     		# options: [NeRF, SirenNeRF]
+  framework: NeRF     		# options: [NeRF, SirenNeRF]	
 
   # nerf base
   perturb: 1.

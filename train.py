@@ -15,12 +15,19 @@ import functools
 from tqdm import tqdm
 from typing import Optional
 from collections import OrderedDict
+import lpips as lpips_lib
 
 import torch
 import torch.nn as nn
 import torchvision
 from torch import optim
 from torch.utils.data.dataloader import DataLoader
+from torch.utils.data.sampler import SubsetRandomSampler
+
+
+def mse_loss(source, target):
+    value = (source - target)**2
+    return torch.mean(value)
 
 
 class NeRFMinusMinusTrainer(nn.Module):
@@ -77,7 +84,7 @@ class NeRFMinusMinusTrainer(nn.Module):
         losses['total'] = loss
 
         with torch.no_grad():
-            losses['train/psnr'] = psnr(rgb, target_s)
+            losses['train/psnr'] = met_psnr(rgb, target_s)
 
         return OrderedDict(
             [('losses', losses),
@@ -130,11 +137,12 @@ def main_function(args):
     dataset = NeRFMMDataset(args.data.data_dir, downscale=args.data.downscale)
     dataloader = DataLoader(dataset, 
         batch_size=args.data.get('batch_size', None), 
-        shuffle=True)
+        shuffle='true')
     valloader = copy.deepcopy(dataloader)
 
     # Camera parameters to optimize
     so3_representation = args.model.so3_representation
+
     cam_param = CamParams.from_config(
         num_imgs=len(dataset), 
         H0=dataset.H, W0=dataset.W, 
@@ -150,6 +158,8 @@ def main_function(args):
     # move models to GPU
     model.to(device)
     cam_param.to(device)
+    lpips_vgg_fn = lpips_lib.LPIPS(net='vgg').to(device)
+    
     print(model)
     print("=> Nerf params: ", utils.count_trainable_parameters(model))
 
@@ -158,9 +168,6 @@ def main_function(args):
         optimizer_nerf = optim.Adam(
             params=grad_vars, lr=args.training.lr_nerf, betas=(0.9, 0.999)
         )
-        # optimizer_param = optim.Adam(
-        #     params=cam_param.parameters(), lr=args.training.lr_param, betas=(0.9, 0.999)
-        # )
         optimizer_intr = optim.Adam(
             params=[cam_param.f], lr=args.training.lr_param, betas=(0.9, 0.999)
         )
@@ -253,6 +260,8 @@ def main_function(args):
         else:
             raise RuntimeError("wrong stage")
         tstart = t0 = time.time()
+        valid_every_nth = int(10)
+        
         with tqdm(range(num_ep), desc=stage_desc) as pbar:
             pbar.update(epoch_idx - ep_offset)
             while epoch_idx - ep_offset < num_ep:
@@ -261,6 +270,9 @@ def main_function(args):
                 # print('Start epoch {}'.format(local_epoch_idx))
                 # with tqdm(dataloader) as pbar:
                 for ind, img in dataloader:
+                    if stage == 'train' and ind % valid_every_nth == 0:
+                        continue
+                    
                     t_it = time.time()
                     it += 1
                     pbar.set_postfix(it=it, ep=epoch_idx)
@@ -377,29 +389,42 @@ def main_function(args):
                 #-------------------
                 if do_eval(local_epoch_idx):
                     with torch.no_grad():
-                        ind, img = next(iter(valloader))
+                        psnr = []
+                        ssim = []
+                        lpips_ = []
+                        for ind, img in dataloader:
+                            if ind % valid_every_nth != 0:
+                                continue
 
-                        R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
+                            R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
 
-                        # [N_rays, 3], [N_rays, 3], [N_rays]
-                        # when logging val images, scale the resolution to be 1/16 just to save time.
-                        rays_o, rays_d, select_inds = get_rays(
-                            R, t, fx, fy, dataset.H, dataset.W, -1,
-                            representation=so3_representation)
+                            # [N_rays, 3], [N_rays, 3], [N_rays]
+                            # when logging val images, scale the resolution to be 1/16 just to save time.
+                            rays_o, rays_d, select_inds = get_rays(
+                                R, t, fx, fy, dataset.H, dataset.W, -1,
+                                representation=so3_representation)
 
-                        # [N_rays, 3]
-                        target_rgb = img.to(device)
+                            # [N_rays, 3]
+                            target_rgb = img.to(device)
 
-                        val_rgb, val_depth, val_extras = volume_render(
-                            rays_o=rays_o,
-                            rays_d=rays_d,
-                            detailed_output=True,   # to return acc map and disp map
-                            **render_kwargs_test)
-
-                    to_img = functools.partial(
-                        utils.lin2img, H=dataset.H, W=dataset.W, batched=render_kwargs_test['batched'])
+                            val_rgb, val_depth, val_extras = volume_render(
+                                rays_o=rays_o,
+                                rays_d=rays_d,
+                                detailed_output=True,   # to return acc map and disp map
+                                **render_kwargs_test)
+                            
+                            to_img = functools.partial(
+                                utils.lin2img, H=dataset.H, W=dataset.W, batched=render_kwargs_test['batched'])
+                            
+                            pred = to_img(val_rgb)
+                            gt = to_img(target_rgb)
+                            psnr.append(met_psnr(pred, gt))
+                            ssim.append(met_ssim(pred, gt))
+                            lpips_.append(lpips_vgg_fn(pred, gt, normalize=True).item())
                     
-                    logger.add('metrics', 'val/psnr', psnr(to_img(val_rgb), to_img(target_rgb)), it=it)
+                    logger.add('metrics', 'test/psnr', sum(psnr) / len(psnr), it=it)
+                    logger.add('metrics', 'test/ssim', sum(ssim) / len(ssim), it=it)
+                    logger.add('metrics', 'test/lpips', sum(lpips_) / len(lpips_), it=it)
                     logger.add_imgs(to_img(val_rgb), 'val/pred', it)
                     logger.add_imgs(to_img(target_rgb), 'val/gt', it)
                     logger.add_imgs(to_img(val_extras['disp_map'].unsqueeze(-1)), 'val/pred_disp', it)
@@ -444,7 +469,8 @@ def main_function(args):
                 #------------
                 epoch_idx += 1
 
-    num_epoch_pre = args.training.get('num_epoch_pre', 0)
+    num_epoch_pre = args.training.get('num_epoch_pre', 0)      
+    
     if num_epoch_pre > 0:
         if epoch_idx < num_epoch_pre:
             #-------------
@@ -464,6 +490,10 @@ def main_function(args):
                 if callable(reset_parameters):
                     m.reset_parameters()
             model.apply(weight_reset)   # recursively: from children to root.
+            
+            # freeze all camera parameters
+            for param in cam_param.parameters():
+                param.requires_grad = False
         
         print("Start refinement... ep={}, in {}".format(epoch_idx, exp_dir))
     else:

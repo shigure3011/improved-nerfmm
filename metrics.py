@@ -1,9 +1,5 @@
 import torch
-import lpips
-from skimage.metrics import structural_similarity as ssim
-
-
-loss_fn = lpips.LPIPS(net='alex')
+from kornia.losses import ssim as dssim
 
 
 def mse(source, target):
@@ -15,9 +11,8 @@ def met_psnr(pred, gt):
     return -10*torch.log10(mse(pred, gt))
 
 
-def met_ssim(pred, gt):
-    return ssim(pred, gt)
-
-
-def met_lpips(pred, gt):
-    return loss_fn(pred, gt)
+def met_ssim(pred, gt, reduction='mean'):
+    image_pred = pred[None, :, :, :]
+    image_gt = pred[None, :, :, :]
+    dssim_ = dssim(image_pred, image_gt, 3, reduction) # dissimilarity in [0, 1]
+    return 1-2*dssim_ # in [-1, 1]

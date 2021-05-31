@@ -11,7 +11,7 @@ from pytorch3d import transforms as tr3d
 
 
 class CamParams(nn.Module):
-    def __init__(self, phi, t, f, H0=None, W0=None, so3_repr=None, intr_repr=None):
+    def __init__(self, phi, t, f, H0=None, W0=None, so3_repr=None, intr_repr=None, rot = None):
         super().__init__()
         self.extra_attr_keys = []
         self.register_extra_attr('so3_repr', so3_repr)
