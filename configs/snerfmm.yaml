@@ -1,0 +1,24 @@
+expname: castle_siren
+
+data:
+  data_dir: ../Data/castle
+
+  #=========
+  N_rays: 1024
+  #=========
+
+model:
+  framework: SirenNeRF
+  net_w: 128
+
+  use_fine_model: true
+  net_w_fine: 128
+
+  # siren
+  siren_sigma_mul: 30.0 # multiply the raw_sigma output of SirenNeRF
+  siren_first_layer_w0: 30.0
+  siren_following_layers_w0: 1.0
+
+training:
+  num_epoch_pre: 1000 # number of epochs run before refinement
+  num_epoch: 5000

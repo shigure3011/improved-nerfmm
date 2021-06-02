@@ -158,7 +158,6 @@ def main_function(args):
     # move models to GPU
     model.to(device)
     cam_param.to(device)
-    lpips_vgg_fn = lpips_lib.LPIPS(net='vgg').to(device)
     
     print(model)
     print("=> Nerf params: ", utils.count_trainable_parameters(model))
@@ -243,11 +242,14 @@ def main_function(args):
         else:
             return ep % 500 == 0
 
-    def do_eval(ep):
+    def do_val(ep):
         if ep <= 200:
-            return ep % 5 == 0
-        else:
             return ep % 20 == 0
+        else:
+            return ep % 50 == 0
+
+    def do_eval(ep):
+        return (ep + 1) % 500 == 0
 
 
     def train(num_ep, stage='train', ep_offset=0): # choose stage between [pre, refine]
@@ -260,7 +262,7 @@ def main_function(args):
         else:
             raise RuntimeError("wrong stage")
         tstart = t0 = time.time()
-        valid_every_nth = int(10)
+        valid_every_nth = int(10) #Valid set
         
         with tqdm(range(num_ep), desc=stage_desc) as pbar:
             pbar.update(epoch_idx - ep_offset)
@@ -366,7 +368,7 @@ def main_function(args):
                 #-------------------
                 # plot camera parameters
                 #-------------------
-                save_output_img = do_nvs(local_epoch_idx) or do_eval(local_epoch_idx)
+                save_output_img = do_nvs(local_epoch_idx) or do_val(local_epoch_idx)
                 logger.add_figure(plot_cam_trans(cam_param), 
                     "camera/extr translation on xy", it, save_img=save_output_img)
                 logger.add_figure(plot_cam_rot(cam_param, so3_representation, 'xy'), 
@@ -387,11 +389,9 @@ def main_function(args):
                 #-------------------
                 # eval with gt
                 #-------------------
-                if do_eval(local_epoch_idx):
+                if do_val(local_epoch_idx):
                     with torch.no_grad():
                         psnr = []
-                        ssim = []
-                        lpips_ = []
                         for ind, img in dataloader:
                             if ind % valid_every_nth != 0:
                                 continue
@@ -419,17 +419,60 @@ def main_function(args):
                             pred = to_img(val_rgb)
                             gt = to_img(target_rgb)
                             psnr.append(met_psnr(pred, gt))
-                            ssim.append(met_ssim(pred, gt))
-                            lpips_.append(lpips_vgg_fn(pred, gt, normalize=True).item())
                     
-                    logger.add('metrics', 'test/psnr', sum(psnr) / len(psnr), it=it)
-                    logger.add('metrics', 'test/ssim', sum(ssim) / len(ssim), it=it)
-                    logger.add('metrics', 'test/lpips', sum(lpips_) / len(lpips_), it=it)
+                    logger.add('val', 'psnr', sum(psnr) / len(psnr), it=it)
                     logger.add_imgs(to_img(val_rgb), 'val/pred', it)
                     logger.add_imgs(to_img(target_rgb), 'val/gt', it)
                     logger.add_imgs(to_img(val_extras['disp_map'].unsqueeze(-1)), 'val/pred_disp', it)
                     logger.add_imgs(to_img(val_depth.unsqueeze(-1)), 'val/pred_depth', it)
                     logger.add_imgs(to_img(val_extras['acc_map'].unsqueeze(-1)), 'val/pred_acc', it)
+
+
+                if do_eval(local_epoch_idx):
+                    with torch.no_grad():
+                        lpips_vgg_fn = lpips_lib.LPIPS(net='vgg').to(device)
+                        
+                        psnr = []
+                        ssim = []
+                        lpips = []                
+        
+                        for ind, img in dataloader:
+                            if ind % valid_every_nth != 0:
+                                continue
+
+                            R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
+
+                            # [N_rays, 3], [N_rays, 3], [N_rays]
+                            # when logging val images, scale the resolution to be 1/16 just to save time.
+                            rays_o, rays_d, select_inds = get_rays(
+                                R, t, fx, fy, dataset.H, dataset.W, -1,
+                                representation=so3_representation)
+
+                            # [N_rays, 3]
+                            target_rgb = img.to(device)
+
+                            val_rgb, val_depth, val_extras = volume_render(
+                                rays_o=rays_o,
+                                rays_d=rays_d,
+                                detailed_output=True,   # to return acc map and disp map
+                                **render_kwargs_test)
+                            
+                            to_img = functools.partial(
+                                utils.lin2img, H=dataset.H, W=dataset.W, batched=render_kwargs_test['batched'])
+                            
+                            pred = to_img(val_rgb)
+                            gt = to_img(target_rgb)
+                            psnr.append(met_psnr(pred, gt).item())
+                            ssim.append(met_ssim(pred, gt).item())
+                            lpips.append(lpips_vgg_fn(
+                                pred.unsqueeze(0),
+                                gt.unsqueeze(0),
+                                normalize = True).item())
+                    
+                    logger.add('test', 'psnr', sum(psnr) / len(psnr), it=it)
+                    logger.add('test', 'ssim', sum(ssim) / len(ssim), it=it)
+                    logger.add('test', 'lpips', sum(lpips) / len(lpips), it=it)
+                    
 
                 #-------------------
                 # novel view synthesis

@@ -34,9 +34,9 @@ model:
   netchunk: 524288
 
   use_fine_model: false
-  net_d_fine:     # will only be used if set use_fine_model to True.
-  net_w_fine:     # will only be used if set use_fine_model to True
-  net_skips_fine: # will only be used if set use_fine_model to True
+  net_d_fine: 8    		# will only be used if set use_fine_model to True.
+  net_w_fine: 256    		# will only be used if set use_fine_model to True
+  net_skips_fine: [4] 		# will only be used if set use_fine_model to True
 
   # nerf-minus-minus
   so3_representation: 'axis-angle'    # options: [quaternion, axis-angle, rotation6D]

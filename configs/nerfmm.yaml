@@ -1,0 +1,19 @@
+expname: castle
+
+data:
+  data_dir: ../Data/castle
+
+  #=========
+  N_rays: 1024
+  #=========
+
+model:
+  framework: NeRF
+  net_w: 128
+
+  use_fine_model: true
+  net_w_fine: 128
+
+training:
+  num_epoch_pre: 1000 # number of epochs run before refinement
+  num_epoch: 5000

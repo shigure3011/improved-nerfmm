@@ -12,7 +12,7 @@ def met_psnr(pred, gt):
 
 
 def met_ssim(pred, gt, reduction='mean'):
-    image_pred = pred[None, :, :, :]
-    image_gt = pred[None, :, :, :]
+    image_pred = pred.unsqueeze(0)
+    image_gt = gt.unsqueeze(0)
     dssim_ = dssim(image_pred, image_gt, 3, reduction) # dissimilarity in [0, 1]
     return 1-2*dssim_ # in [-1, 1]
