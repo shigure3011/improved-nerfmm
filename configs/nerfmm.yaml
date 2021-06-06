@@ -1,7 +1,7 @@
 expname: castle
 
 data:
-  data_dir: ../Data/castle
+  data_dir: ../Data/castle/images
 
   #=========
   N_rays: 1024
@@ -12,8 +12,10 @@ model:
   net_w: 128
 
   use_fine_model: true
+  net_d_fine: 8
   net_w_fine: 128
+  net_skips_fine: [4] 
 
 training:
   num_epoch_pre: 1000 # number of epochs run before refinement
-  num_epoch: 5000
+  num_epoch: 10000

@@ -371,12 +371,17 @@ def main_function(args):
                 save_output_img = do_nvs(local_epoch_idx) or do_val(local_epoch_idx)
                 logger.add_figure(plot_cam_trans(cam_param), 
                     "camera/extr translation on xy", it, save_img=save_output_img)
+                logger.add_figure(plot_cam_trans(cam_param, about = 'yz'), 
+                    "camera/extr translation on yz", it, save_img=save_output_img)
+                logger.add_figure(plot_cam_trans(cam_param, about = 'xz'), 
+                    "camera/extr translation on xz", it, save_img=save_output_img)
                 logger.add_figure(plot_cam_rot(cam_param, so3_representation, 'xy'), 
                     "camera/extr rotation about xy", it, save_img=save_output_img)
                 logger.add_figure(plot_cam_rot(cam_param, so3_representation, 'yz'), 
                     "camera/extr rotation about yz", it, save_img=save_output_img)
                 logger.add_figure(plot_cam_rot(cam_param, so3_representation, 'xz'), 
                     "camera/extr rotation about xz", it, save_img=save_output_img)
+                
 
                 # log camera parameters
                 logger.add_vector('camera', 'extr_phi', cam_param.phi.data, it)
@@ -533,15 +538,15 @@ def main_function(args):
                 if callable(reset_parameters):
                     m.reset_parameters()
             model.apply(weight_reset)   # recursively: from children to root.
-            
-            # freeze all camera parameters
-            for param in cam_param.parameters():
-                param.requires_grad = False
         
         print("Start refinement... ep={}, in {}".format(epoch_idx, exp_dir))
     else:
         print("Start training... ep={}, in {}".format(epoch_idx, exp_dir))
 
+    # freeze all camera parameters
+    for param in cam_param.parameters():
+        param.requires_grad = False
+        
     train(args.training.num_epoch, 'train', ep_offset=num_epoch_pre)
 
     final_ckpt = 'final_{:08d}.pt'.format(it)

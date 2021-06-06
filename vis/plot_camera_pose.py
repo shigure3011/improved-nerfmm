@@ -6,10 +6,15 @@ from models.frameworks import create_model
 import os
 import torch
 import numpy as np
+import pandas as pd
 
 """
 modified from https://github.com/opencv/opencv/blob/master/samples/python/camera_calibration_show_extrinsics.py
 """
+
+def normalize(x):
+    return (x-min(x))/(max(x)-min(x))
+
 
 def inverse_homogeneoux_matrix(M):
     R = M[0:3, 0:3]
@@ -132,14 +137,31 @@ def main_function(args):
     cam_height = 0.0048 * 5 / 2 /2
     scale_focal = 5.
 
-    #--------------
-    # Load model
-    #--------------
+    model_name = 'nerf--' if args.model.framework == 'NeRF' else 'ours'
+
     device_ids = args.device_ids
-    device = "cuda:{}".format(device_ids[0])
+    #device = "cuda:{}".format(device_ids[0])
+    device = 'cpu'
     exp_dir = args.training.exp_dir
     print("=> Experiments dir: {}".format(exp_dir))
 
+    dataset_name = (exp_dir.split('/')[-1]).split('_')[0]
+    colmap_dir = '../Data/{}'.format(dataset_name)
+    print("=> Colmap dir: {}".format(colmap_dir))
+    '''
+    #--------------
+    # Load colmap
+    #--------------
+    poses_bounds = np.load(os.path.join(colmap_dir, 'poses_bounds.npy'))
+    c2ws_colmap = poses_bounds[:, :15].reshape(-1, 3, 5)  # (N_images, 3, 5)
+    c2ws_colmap = np.concatenate(
+      [c2ws_colmap[..., 1:2], 
+      -c2ws_colmap[..., :1], 
+      c2ws_colmap[..., 2:4]], -1)
+    '''
+    #--------------
+    # Load model
+    #--------------
     model, render_kwargs_train, render_kwargs_test, grad_vars = create_model(
         args, model_type=args.model.framework)
     print("=> Nerf params: ", utils.count_trainable_parameters(model))
@@ -171,7 +193,8 @@ def main_function(args):
     #--------------
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D  # pylint: disable=unused-variable
-
+    import plotly.graph_objects as go
+    '''
     fig = plt.figure()
     ax = fig.gca(projection='3d')
     # ax.set_aspect("equal")
@@ -199,8 +222,46 @@ def main_function(args):
     ax.set_zlabel('-y')
     ax.set_title('Extrinsic Parameters Visualization')
 
+    ax.view_init(elev=20., azim=-30)
+
     plt.show()
     print('Done')
+    '''
+    t = c2ws[..., 3]
+    tx = normalize(t[...,0])
+    ty = normalize(t[...,1])
+    tz = normalize(t[...,2])
+
+    '''
+    t_colmap = c2ws_colmap[..., 3]
+    tx_colmap = normalize(t_colmap[...,0])
+    ty_colmap = 1 - normalize(t_colmap[...,1])
+
+    fig = plt.figure()
+    plt.axis('off')
+    style = 'm^-' if model_name == 'nerf--' else 'r^-'
+    plt.plot(tx, ty, style, label=model_name)
+    # plt.plot(tx_colmap, ty_colmap, 'b^-', label='colmap')
+    # plt.legend()
+
+    plt.savefig('Camera visual/{0}_{1}.png'.format(
+      dataset_name,
+      model_name
+      ), transparent = True)
+    '''
+    color = 'magenta' if model_name == 'nerf--' else 'red'
+    fig = go.Figure(data=go.Scatter3d(
+      x=tx, y=ty, z=tz,
+      marker = dict (
+        size=4,
+        color=color
+      ),
+      line = dict(
+        color=color,
+        width=2
+      )
+    ))
+    fig.show()
 
 
 if __name__ == "__main__":

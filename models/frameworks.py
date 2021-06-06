@@ -93,7 +93,7 @@ def create_model(
         extra_configs.update(dict(
             sigma_mul=args.model.siren_sigma_mul,
             rgb_mul=args.model.setdefault('siren_rgb_mul', 1.),
-            first_layer_w0=args.model.siren_sigma_mul,
+            first_layer_w0=args.model.siren_first_layer_w0,
             following_layers_w0=args.model.siren_following_layers_w0))
 
     fg_kwargs = dict(
@@ -110,7 +110,7 @@ def create_model(
 
     model_kwargs = dict(
         fg_kwargs=fg_kwargs,
-        net_fine_kwargs=fg_fine_kwargs,
+        fg_fine_kwargs=fg_fine_kwargs,
         use_fine_model=args.model.setdefault('use_fine_model', False),
         use_viewdirs=args.model.use_viewdirs,
         embed_multires=args.model.multires,
