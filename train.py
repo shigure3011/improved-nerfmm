@@ -24,6 +24,7 @@ from torch import optim
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
 
+import matplotlib.pyplot as plt
 
 def mse_loss(source, target):
     value = (source - target)**2
@@ -64,19 +65,11 @@ class NeRFMinusMinusTrainer(nn.Module):
 
         # reconstruction loss
         # could be rendered as an mse image
-        losses['loss_img'] = mse_loss(rgb, target_s)
-        losses['loss_img'] *= args.training.w_img
+        losses['rgb/fine'] = mse_loss(rgb, target_s)
+        losses['rgb/fine'] *= args.training.w_img
 
-        # perceptual loss
-        if args.training.w_perceptual > 0:
-            assert H is not None and W is not None
-            def preprocess(img):
-                return (torch.reshape(img,[-1, H, W, 3])).permute(0, 3, 1, 2)
-            target_reshaped = preprocess(target_s)
-            losses['loss_percpt'] = args.training.w_perceptual * \
-                get_perceptual_loss(
-                    self.perceptual_net,
-                    preprocess(rgb), target_reshaped)
+        if args.model.N_importance > 0 and args.model.use_fine_model:
+            losses['rgb/coarse'] = mse_loss(extras['rgb0'], target_s)
 
         loss = 0
         for v in losses.values():
@@ -154,6 +147,7 @@ def main_function(args):
     # Create nerf model
     model, render_kwargs_train, render_kwargs_test, grad_vars = create_model(
         args, model_type=args.model.framework)
+        
 
     # move models to GPU
     model.to(device)
@@ -244,9 +238,9 @@ def main_function(args):
 
     def do_val(ep):
         if ep <= 200:
-            return ep % 20 == 0
+            return (ep + 1) % 20 == 0
         else:
-            return ep % 50 == 0
+            return (ep + 1) % 50 == 0
 
     def do_eval(ep):
         return (ep + 1) % 500 == 0
@@ -264,6 +258,17 @@ def main_function(args):
         tstart = t0 = time.time()
         valid_every_nth = int(10) #Valid set
         
+        #############################################################
+        if stage == 'pre':
+            render_kwargs_train['N_samples'] = 128
+            render_kwargs_train['N_importance'] = 0
+        else:
+            render_kwargs_train['N_samples'] = 64
+            render_kwargs_train['N_importance'] = 128
+
+        args.model.N_importance = render_kwargs_train['N_importance']
+        #############################################################
+
         with tqdm(range(num_ep), desc=stage_desc) as pbar:
             pbar.update(epoch_idx - ep_offset)
             while epoch_idx - ep_offset < num_ep:
@@ -349,7 +354,7 @@ def main_function(args):
                             global_step=it, epoch_idx=epoch_idx)
 
                     if it == 0 or (args.training.i_save > 0 and time.time() - t0 > args.training.i_save):
-                        # print('Saving checkpoint...')
+                        print('Saving checkpoint...')
                         checkpoint_io.save(
                             filename='latest.pt'.format(it),
                             global_step=it, epoch_idx=epoch_idx)
@@ -375,12 +380,6 @@ def main_function(args):
                     "camera/extr translation on yz", it, save_img=save_output_img)
                 logger.add_figure(plot_cam_trans(cam_param, about = 'xz'), 
                     "camera/extr translation on xz", it, save_img=save_output_img)
-                logger.add_figure(plot_cam_rot(cam_param, so3_representation, 'xy'), 
-                    "camera/extr rotation about xy", it, save_img=save_output_img)
-                logger.add_figure(plot_cam_rot(cam_param, so3_representation, 'yz'), 
-                    "camera/extr rotation about yz", it, save_img=save_output_img)
-                logger.add_figure(plot_cam_rot(cam_param, so3_representation, 'xz'), 
-                    "camera/extr rotation about xz", it, save_img=save_output_img)
                 
 
                 # log camera parameters
@@ -426,6 +425,7 @@ def main_function(args):
                             psnr.append(met_psnr(pred, gt))
                     
                     logger.add('val', 'psnr', sum(psnr) / len(psnr), it=it)
+                    print('Iter {0}: {1}'.format(it, sum(psnr) / len(psnr))
                     logger.add_imgs(to_img(val_rgb), 'val/pred', it)
                     logger.add_imgs(to_img(target_rgb), 'val/gt', it)
                     logger.add_imgs(to_img(val_extras['disp_map'].unsqueeze(-1)), 'val/pred_disp', it)
@@ -546,7 +546,7 @@ def main_function(args):
     # freeze all camera parameters
     for param in cam_param.parameters():
         param.requires_grad = False
-        
+
     train(args.training.num_epoch, 'train', ep_offset=num_epoch_pre)
 
     final_ckpt = 'final_{:08d}.pt'.format(it)

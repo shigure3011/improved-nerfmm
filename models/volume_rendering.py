@@ -11,7 +11,7 @@ def volume_render(
     near: float,
     far: float,
     network_fn,
-    network_fn_fine=None,
+    network_fine=None,
     batched: bool = True,
     batched_info: Optional[Dict] = None,
     # configs
@@ -40,8 +40,8 @@ def volume_render(
                 visibility_weights: [(B,) N_rays, N_samples, ...]
                 raw.xxxx:           [(B,) N_rays, N_samples, ...]
     """
-    use_fine_model = use_fine_model and network_fn_fine is not None
-
+    use_fine_model = use_fine_model and network_fine is not None
+    
     if batched:
         DIM_RAYS = 1
         DIM_SAMPLES = 2
@@ -88,9 +88,10 @@ def volume_render(
         if N_importance > 0:
             # ---------------
             # Infer the weights of coarse points and do hierarchical sampling
+            rgb0, depth0, acc0, disp0, opac0, v_weights = ray_integration(
+                coarse_raw['rgb'], coarse_raw['sigma'], z_vals, rays_d, **kwargs)
+
             with torch.no_grad():
-                *_, v_weights = ray_integration(
-                    coarse_raw['rgb'], coarse_raw['sigma'], z_vals, rays_d, **kwargs)
                 z_vals_mid = 0.5 * (z_vals[..., 1:] + z_vals[..., :-1])
 
                 # [(B,) N_rays, N_samples]
@@ -106,7 +107,7 @@ def volume_render(
             # ---------------
             # Qeury network on the importance sampled points
             fine_raw = batchify_query_network(
-                fine_pts, viewdirs, network_fn_fine if use_fine_model else network_fn,
+                fine_pts, viewdirs, network_fine if use_fine_model else network_fn,
                 batched=batched,
                 batched_info=batched_info,
                 detailed_output=detailed_output,
@@ -140,6 +141,9 @@ def volume_render(
             'depth_map': depth_map,
         }
 
+        if  N_importance > 0:
+            ret['rgb0'] = rgb0
+            
         if detailed_output:
             ret.update(
                 {

@@ -141,7 +141,8 @@ def create_model(
         "ret_raw": True,
         # for training, rayschunk has not effect to the GPU usage, thus should set to maximum to prevent training speed loss (multiple forward).
         "rayschunk": args.model.rayschunk,
-        "sigma_clamp_mode": args.model.sigma_clamp_mode
+        "sigma_clamp_mode": args.model.sigma_clamp_mode,
+        "use_fine_model": args.model.use_fine_model,
     }
     if 'netchunk' in args.model.keys():
         render_kwargs_train['netchunk'] = args.model.netchunk

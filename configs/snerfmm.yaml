@@ -1,7 +1,7 @@
-expname: castle_siren
+expname: fortress_siren_new
 
 data:
-  data_dir: ../Data/castle/images
+  data_dir: ../Data/fortress/images
 
   #=========
   N_rays: 1024
@@ -14,13 +14,14 @@ model:
   use_fine_model: true
   net_d_fine: 8
   net_w_fine: 128
-  net_skips_fine: [4] 
+  net_skips_fine: [4]
 
   # siren
-  siren_sigma_mul: 40.0 # multiply the raw_sigma output of SirenNeRF
+  siren_sigma_mul: 30.0 # multiply the raw_sigma output of SirenNeRF
   siren_first_layer_w0: 30.0
   siren_following_layers_w0: 1.0
 
 training:
+  lr_nerf: 5.0e-4
   num_epoch_pre: 1000 # number of epochs run before refinement
-  num_epoch: 10000
+  num_epoch: 5000

@@ -248,6 +248,7 @@ class SirenNeRF(nn.Module):
         input_pts:          [(B), N, 3]
         input_views:        [(B), N, any]
         """
+
         if input_views is None:
             shape = list(input_pts.shape)
             shape[-1] = 0

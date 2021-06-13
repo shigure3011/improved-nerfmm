@@ -20,7 +20,7 @@ model:
   # nerf base
   perturb: 1.
   raw_noise_std: 1.
-  N_samples: 64      # number of points sampled for each ray, in volume rendering process.
+  N_samples: 64     # number of points sampled for each ray, in volume rendering process.
   N_importance: 128
   net_d: 8
   net_w: 256
