@@ -425,7 +425,7 @@ def main_function(args):
                             psnr.append(met_psnr(pred, gt))
                     
                     logger.add('val', 'psnr', sum(psnr) / len(psnr), it=it)
-                    print('Iter {0}: {1}'.format(it, sum(psnr) / len(psnr))
+                    print('Iter {0}: {1}'.format(it, sum(psnr) / len(psnr)))
                     logger.add_imgs(to_img(val_rgb), 'val/pred', it)
                     logger.add_imgs(to_img(target_rgb), 'val/gt', it)
                     logger.add_imgs(to_img(val_extras['disp_map'].unsqueeze(-1)), 'val/pred_disp', it)
