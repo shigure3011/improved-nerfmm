@@ -1,0 +1,23 @@
+expname: fortress_colmap
+
+data:
+  data_dir: ../Data/fortress
+  colmap: true
+
+  #=========
+  N_rays: 1024
+  #=========
+
+model:
+  framework: NeRF
+  net_w: 128
+
+  use_fine_model: true
+  net_d_fine: 8
+  net_w_fine: 128
+  net_skips_fine: [4] 
+
+training:
+  lr_nerf: 5.0e-4
+  num_epoch_pre: 1000 # number of epochs run before refinement
+  num_epoch: 5000

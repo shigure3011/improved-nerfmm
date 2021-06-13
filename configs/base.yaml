@@ -5,6 +5,7 @@ device_ids: [0] # single gpu
 
 data:
   white_bkgd: false
+  colmap: false
   data_dir: null
   #=========
   N_rays: 1024      # numer of sampled rays in training.

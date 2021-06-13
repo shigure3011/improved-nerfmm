@@ -127,7 +127,10 @@ def main_function(args):
     checkpoint_io = CheckpointIO(checkpoint_dir=os.path.join(exp_dir, 'ckpts'))
 
     # datasets: just pure images.
-    dataset = NeRFMMDataset(args.data.data_dir, downscale=args.data.downscale)
+    if not args.data.colmap:
+        dataset = NeRFMMDataset(args.data.data_dir, downscale=args.data.downscale)
+    else:
+        dataset = ColmapDataset(args.data.data_dir, downscale=args.data.downscale)
     dataloader = DataLoader(dataset, 
         batch_size=args.data.get('batch_size', None), 
         shuffle=True)
@@ -136,12 +139,13 @@ def main_function(args):
     # Camera parameters to optimize
     so3_representation = args.model.so3_representation
 
-    cam_param = CamParams.from_config(
-        num_imgs=len(dataset), 
-        H0=dataset.H, W0=dataset.W, 
-        so3_repr=so3_representation,
-        intr_repr=args.model.intrinsics_representation,
-        initial_fov=args.model.initial_fov)
+    if not args.data.colmap:
+        cam_param = CamParams.from_config(
+            num_imgs=len(dataset), 
+            H0=dataset.H, W0=dataset.W, 
+            so3_repr=so3_representation,
+            intr_repr=args.model.intrinsics_representation,
+            initial_fov=args.model.initial_fov)
 
 
     # Create nerf model
@@ -276,7 +280,7 @@ def main_function(args):
                 pbar.update()
                 # print('Start epoch {}'.format(local_epoch_idx))
                 # with tqdm(dataloader) as pbar:
-                for ind, img in dataloader:
+                for ind, img, c2w, focal in dataloader:
                     if stage == 'train' and ind % valid_every_nth == 0:
                         continue
                     
@@ -284,13 +288,20 @@ def main_function(args):
                     it += 1
                     pbar.set_postfix(it=it, ep=epoch_idx)
 
-                    R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
+                    if not args.data.colmap:
+                        R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
 
-                    # [(B,) N_rays, 3], [(B,) N_rays, 3], [(B,) N_rays]
-                    rays_o, rays_d, select_inds = get_rays(
-                        R, t, fx, fy, dataset.H, dataset.W,
-                        args.data.N_rays,
-                        representation=so3_representation)
+                        # [(B,) N_rays, 3], [(B,) N_rays, 3], [(B,) N_rays]
+                        rays_o, rays_d, select_inds = get_rays(
+                            R, t, fx, fy, dataset.H, dataset.W,
+                            args.data.N_rays,
+                            representation=so3_representation)
+
+                    else:
+                        rays_o, rays_d, select_inds = get_rays_colmap(
+                            device,
+                            c2w, focal, focal, dataset.H, dataset.W,
+                            args.data.N_rays)
 
                     # [(B,) N_rays, 3]
                     target_rgb = torch.gather(img.to(device), -2, torch.stack(3*[select_inds],-1)) 
@@ -400,13 +411,20 @@ def main_function(args):
                             if ind % valid_every_nth != 0:
                                 continue
 
-                            R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
+                            if not args.data.colmap:
+                                R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
 
-                            # [N_rays, 3], [N_rays, 3], [N_rays]
-                            # when logging val images, scale the resolution to be 1/16 just to save time.
-                            rays_o, rays_d, select_inds = get_rays(
-                                R, t, fx, fy, dataset.H, dataset.W, -1,
-                                representation=so3_representation)
+                                # [N_rays, 3], [N_rays, 3], [N_rays]
+                                # when logging val images, scale the resolution to be 1/16 just to save time.
+                                rays_o, rays_d, select_inds = get_rays(
+                                    R, t, fx, fy, dataset.H, dataset.W, -1,
+                                    representation=so3_representation)
+
+                            else:
+                                rays_o, rays_d, select_inds = get_rays_colmap(
+                                    device,
+                                    c2w, focal, focal, dataset.H, dataset.W,
+                                    args.data.N_rays)                                
 
                             # [N_rays, 3]
                             target_rgb = img.to(device)
@@ -445,13 +463,20 @@ def main_function(args):
                             if ind % valid_every_nth != 0:
                                 continue
 
-                            R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
+                            if not args.data.colmap:
+                                R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
 
-                            # [N_rays, 3], [N_rays, 3], [N_rays]
-                            # when logging val images, scale the resolution to be 1/16 just to save time.
-                            rays_o, rays_d, select_inds = get_rays(
-                                R, t, fx, fy, dataset.H, dataset.W, -1,
-                                representation=so3_representation)
+                                # [N_rays, 3], [N_rays, 3], [N_rays]
+                                # when logging val images, scale the resolution to be 1/16 just to save time.
+                                rays_o, rays_d, select_inds = get_rays(
+                                    R, t, fx, fy, dataset.H, dataset.W, -1,
+                                    representation=so3_representation)
+
+                            else:
+                                rays_o, rays_d, select_inds = get_rays_colmap(
+                                    device,
+                                    c2w, focal, focal, dataset.H, dataset.W,
+                                    args.data.N_rays)  
 
                             # [N_rays, 3]
                             target_rgb = img.to(device)
@@ -517,7 +542,10 @@ def main_function(args):
                 #------------
                 epoch_idx += 1
 
-    num_epoch_pre = args.training.get('num_epoch_pre', 0)      
+    if not arg.data.colmap:
+        num_epoch_pre = args.training.get('num_epoch_pre', 0)
+    else:
+        num_epoch_pre = 0
     
     if num_epoch_pre > 0:
         if epoch_idx < num_epoch_pre:
