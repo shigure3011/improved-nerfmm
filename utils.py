@@ -227,7 +227,7 @@ def figure_to_image(figures, close=True):
         return image
 
 
-def find_files(dir, exts=['*.png', '*.jpg']):
+def find_files(dir, exts=['*.png', '*.jpg', '*.PNG', '*.JPG']):
     if os.path.isdir(dir):
         # types should be ['*.png', '*.jpg']
         files_grabbed = []
