@@ -2,11 +2,11 @@ import utils
 from metrics import *
 from logger import Logger
 from checkpoints import CheckpointIO
-from dataio.dataset import NeRFMMDataset
+from dataio.dataset import NeRFMMDataset, ColmapDataset, get_ndc_rays
 from models.frameworks import create_model
 from models.volume_rendering import volume_render
 from models.perceptual_model import get_perceptual_loss
-from models.cam_params import CamParams, get_rays, plot_cam_rot, plot_cam_trans
+from models.cam_params import CamParams, get_rays, plot_cam_rot, plot_cam_trans, get_rays_colmap
 
 import os
 import time
@@ -23,8 +23,6 @@ import torchvision
 from torch import optim
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
-
-import matplotlib.pyplot as plt
 
 def mse_loss(source, target):
     value = (source - target)**2
@@ -139,13 +137,12 @@ def main_function(args):
     # Camera parameters to optimize
     so3_representation = args.model.so3_representation
 
-    if not args.data.colmap:
-        cam_param = CamParams.from_config(
-            num_imgs=len(dataset), 
-            H0=dataset.H, W0=dataset.W, 
-            so3_repr=so3_representation,
-            intr_repr=args.model.intrinsics_representation,
-            initial_fov=args.model.initial_fov)
+    cam_param = CamParams.from_config(
+        num_imgs=len(dataset), 
+        H0=dataset.H, W0=dataset.W, 
+        so3_repr=so3_representation,
+        intr_repr=args.model.intrinsics_representation,
+        initial_fov=args.model.initial_fov)
 
 
     # Create nerf model
@@ -280,10 +277,10 @@ def main_function(args):
                 pbar.update()
                 # print('Start epoch {}'.format(local_epoch_idx))
                 # with tqdm(dataloader) as pbar:
-                for ind, img, c2w, focal in dataloader:
+                for ind, img, c2w, focal, bound in dataloader:
                     if stage == 'train' and ind % valid_every_nth == 0:
                         continue
-                    
+
                     t_it = time.time()
                     it += 1
                     pbar.set_postfix(it=it, ep=epoch_idx)
@@ -302,6 +299,9 @@ def main_function(args):
                             device,
                             c2w, focal, focal, dataset.H, dataset.W,
                             args.data.N_rays)
+                        
+                        rays_o, rays_d = get_ndc_rays(dataset.H, dataset.W, 
+                                                      focal, 1.0, rays_o, rays_d)
 
                     # [(B,) N_rays, 3]
                     target_rgb = torch.gather(img.to(device), -2, torch.stack(3*[select_inds],-1)) 
@@ -385,6 +385,7 @@ def main_function(args):
                 # plot camera parameters
                 #-------------------
                 save_output_img = do_nvs(local_epoch_idx) or do_val(local_epoch_idx)
+                
                 logger.add_figure(plot_cam_trans(cam_param), 
                     "camera/extr translation on xy", it, save_img=save_output_img)
                 logger.add_figure(plot_cam_trans(cam_param, about = 'yz'), 
@@ -407,7 +408,7 @@ def main_function(args):
                 if do_val(local_epoch_idx):
                     with torch.no_grad():
                         psnr = []
-                        for ind, img in dataloader:
+                        for ind, img, c2w, focal, bound in dataloader:
                             if ind % valid_every_nth != 0:
                                 continue
 
@@ -424,7 +425,10 @@ def main_function(args):
                                 rays_o, rays_d, select_inds = get_rays_colmap(
                                     device,
                                     c2w, focal, focal, dataset.H, dataset.W,
-                                    args.data.N_rays)                                
+                                    -1)                                
+
+                                rays_o, rays_d = get_ndc_rays(dataset.H, dataset.W, 
+                                                              focal, 1.0, rays_o, rays_d)
 
                             # [N_rays, 3]
                             target_rgb = img.to(device)
@@ -459,7 +463,7 @@ def main_function(args):
                         ssim = []
                         lpips = []                
         
-                        for ind, img in dataloader:
+                        for ind, img, c2w, focal, bound in dataloader:
                             if ind % valid_every_nth != 0:
                                 continue
 
@@ -476,7 +480,10 @@ def main_function(args):
                                 rays_o, rays_d, select_inds = get_rays_colmap(
                                     device,
                                     c2w, focal, focal, dataset.H, dataset.W,
-                                    args.data.N_rays)  
+                                    -1)
+
+                                rays_o, rays_d = get_ndc_rays(dataset.H, dataset.W, 
+                                                              focal, 1.0, rays_o, rays_d)
 
                             # [N_rays, 3]
                             target_rgb = img.to(device)
@@ -542,7 +549,7 @@ def main_function(args):
                 #------------
                 epoch_idx += 1
 
-    if not arg.data.colmap:
+    if not args.data.colmap:
         num_epoch_pre = args.training.get('num_epoch_pre', 0)
     else:
         num_epoch_pre = 0

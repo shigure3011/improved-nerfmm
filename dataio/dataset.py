@@ -10,7 +10,6 @@ from skimage.transform import rescale
 import torch
 from torch.utils.data.dataset import Dataset
 
-
 class NeRFMMDataset(Dataset):
     def __init__(self, data_dir, downscale=1.):
         super().__init__()
@@ -35,7 +34,51 @@ class NeRFMMDataset(Dataset):
     def __getitem__(self, index):
         img = torch.from_numpy(self.imgs[index]).reshape([-1, 3])
         index = torch.tensor([index]).long()
-        return index, img, None, None
+        return index, img, None, None, None
+
+
+def normalize(v):
+    """Normalize a vector."""
+    return v/np.linalg.norm(v)
+
+
+def average_poses(poses):
+    """
+    Calculate the average pose, which is then used to center all poses
+    using @center_poses. Its computation is as follows:
+    1. Compute the center: the average of pose centers.
+    2. Compute the z axis: the normalized average z axis.
+    3. Compute axis y': the average y axis.
+    4. Compute x' = y' cross product z, then normalize it as the x axis.
+    5. Compute the y axis: z cross product x.
+    
+    Note that at step 3, we cannot directly use y' as y axis since it's
+    not necessarily orthogonal to z axis. We need to pass from x to y.
+
+    Inputs:
+        poses: (N_images, 3, 4)
+
+    Outputs:
+        pose_avg: (3, 4) the average pose
+    """
+    # 1. Compute the center
+    center = poses[..., 3].mean(0) # (3)
+
+    # 2. Compute the z axis
+    z = normalize(poses[..., 2].mean(0)) # (3)
+
+    # 3. Compute axis y' (no need to normalize as it's not the final output)
+    y_ = poses[..., 1].mean(0) # (3)
+
+    # 4. Compute the x axis
+    x = normalize(np.cross(y_, z)) # (3)
+
+    # 5. Compute the y axis (as z and x are normalized, y is already of norm 1)
+    y = np.cross(z, x) # (3)
+
+    pose_avg = np.stack([x, y, z, center], 1) # (3, 4)
+
+    return pose_avg
 
 
 def center_poses(poses):
@@ -82,6 +125,76 @@ def convert3x4_4x4(input):
             output = np.concatenate([input, np.array([[0,0,0,1]], dtype=input.dtype)], axis=0)  # (4, 4)
             output[3, 3] = 1.0
     return output
+
+
+def get_rays(directions, c2w):
+    """
+    Get ray origin and normalized directions in world coordinate for all pixels in one image.
+    Reference: https://www.scratchapixel.com/lessons/3d-basic-rendering/
+               ray-tracing-generating-camera-rays/standard-coordinate-systems
+
+    Inputs:
+        directions: (H, W, 3) precomputed ray directions in camera coordinate
+        c2w: (3, 4) transformation matrix from camera coordinate to world coordinate
+
+    Outputs:
+        rays_o: (H*W, 3), the origin of the rays in world coordinate
+        rays_d: (H*W, 3), the normalized direction of the rays in world coordinate
+    """
+    # Rotate ray directions from camera coordinate to the world coordinate
+    rays_d = directions @ c2w[:, :3].T # (H, W, 3)
+    rays_d = rays_d / torch.norm(rays_d, dim=-1, keepdim=True)
+    # The origin of all rays is the camera origin in world coordinate
+    rays_o = c2w[:, 3].expand(rays_d.shape) # (H, W, 3)
+
+    rays_d = rays_d.view(-1, 3)
+    rays_o = rays_o.view(-1, 3)
+
+    return rays_o, rays_d
+
+
+def get_ndc_rays(H, W, focal, near, rays_o, rays_d):
+    """
+    Transform rays from world coordinate to NDC.
+    NDC: Space such that the canvas is a cube with sides [-1, 1] in each axis.
+    For detailed derivation, please see:
+    http://www.songho.ca/opengl/gl_projectionmatrix.html
+    https://github.com/bmild/nerf/files/4451808/ndc_derivation.pdf
+
+    In practice, use NDC "if and only if" the scene is unbounded (has a large depth).
+    See https://github.com/bmild/nerf/issues/18
+
+    Inputs:
+        H, W, focal: image height, width and focal length
+        near: (N_rays) or float, the depths of the near plane
+        rays_o: (N_rays, 3), the origin of the rays in world coordinate
+        rays_d: (N_rays, 3), the direction of the rays in world coordinate
+
+    Outputs:
+        rays_o: (N_rays, 3), the origin of the rays in NDC
+        rays_d: (N_rays, 3), the direction of the rays in NDC
+    """
+    # Shift ray origins to near plane
+    t = -(near + rays_o[...,2]) / rays_d[...,2]
+    rays_o = rays_o + t[...,None] * rays_d
+
+    # Store some intermediate homogeneous results
+    ox_oz = rays_o[...,0] / rays_o[...,2]
+    oy_oz = rays_o[...,1] / rays_o[...,2]
+    
+    # Projection
+    o0 = -1./(W/(2.*focal)) * ox_oz
+    o1 = -1./(H/(2.*focal)) * oy_oz
+    o2 = 1. + 2. * near / rays_o[...,2]
+
+    d0 = -1./(W/(2.*focal)) * (rays_d[...,0]/rays_d[...,2] - ox_oz)
+    d1 = -1./(H/(2.*focal)) * (rays_d[...,1]/rays_d[...,2] - oy_oz)
+    d2 = 1 - o2
+    
+    rays_o = torch.stack([o0, o1, o2], -1) # (B, 3)
+    rays_d = torch.stack([d0, d1, d2], -1) # (B, 3)
+    
+    return rays_o, rays_d
 
 
 def read_meta(in_dir, use_ndc):
@@ -145,10 +258,11 @@ class ColmapDataset(Dataset):
         #------------
         # load all poses into memory
         #------------
-        meta = read_meta(self.scene_dir, True)
+        meta = read_meta(colmap_dir, True)
         self.c2ws = meta['c2ws']
         self.c2ws = torch.from_numpy(self.c2ws).float()
         self.focal = float(meta['focal'])
+        self.bounds = torch.from_numpy(meta['bounds']).float()
 
     def __len__(self):
         return len(self.imgs)
@@ -157,5 +271,6 @@ class ColmapDataset(Dataset):
         img = torch.from_numpy(self.imgs[index]).reshape([-1, 3])
         index = torch.tensor([index]).long()
         focal = self.focal
-        c2w = self.c2ws[index]
-        return index, img, c2w, focal
+        c2w = torch.squeeze(self.c2ws[index], 0)
+        bound = torch.squeeze(self.bounds[index], 0)
+        return index, img, c2w, focal, bound

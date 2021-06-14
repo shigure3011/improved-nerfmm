@@ -276,6 +276,9 @@ def get_rays_colmap(
         W: int,
         N_rays: int = -1):
 
+    center_x = W/2.
+    center_y = H/2.
+
     # pytorch's meshgrid has indexing='ij'
     # [..., N_rays]
     prefix = []
@@ -290,14 +293,14 @@ def get_rays_colmap(
         i = torch.gather(i, -1, select_inds)
         j = torch.gather(j, -1, select_inds)
     else:
-        select_inds = torch.arange(H*W)
+        select_inds = torch.arange(H*W).to(device)
 
     # [..., N_rays, 3]
     dirs = torch.stack(
         [
             (i - center_x) / focal_x,
-            (j - center_y) / focal_y,
-            torch.ones_like(i, device=device),
+            -(j - center_y) / focal_y,
+            -torch.ones_like(i, device=device),
         ],
         -1,
     )  # axes orientations : x right, y downwards, z positive
@@ -306,10 +309,10 @@ def get_rays_colmap(
     # Translate camera frame's origin to the world frame. It is the origin of all rays.
     # ---------
 
-    rays_d = dirs @ c2w[:, :3].T # (H, W, 3)
+    rays_d = dirs @ c2w[:, :3].T.to(device) # (..., N-rays, 3)
     rays_d = rays_d / torch.norm(rays_d, dim=-1, keepdim=True)
     # The origin of all rays is the camera origin in world coordinate
-    rays_o = c2w[:, 3].expand(rays_d.shape) # (H, W, 3)
+    rays_o = c2w[:, 3].expand_as(rays_d).to(device) # (..., N-rays, 3)
 
     # [..., N_rays, 3]
     return rays_o, rays_d, select_inds

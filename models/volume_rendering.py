@@ -41,7 +41,7 @@ def volume_render(
                 raw.xxxx:           [(B,) N_rays, N_samples, ...]
     """
     use_fine_model = use_fine_model and network_fine is not None
-    
+
     if batched:
         DIM_RAYS = 1
         DIM_SAMPLES = 2
