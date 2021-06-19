@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from pytorch3d import transforms as tr3d
-
+from dataio.dataset import *
 
 class CamParams(nn.Module):
     def __init__(self, phi, t, f, H0=None, W0=None, so3_repr=None, intr_repr=None):
@@ -21,6 +21,7 @@ class CamParams(nn.Module):
         self.phi = nn.Parameter(phi)
         self.t = nn.Parameter(t)
         self.f = nn.Parameter(f)
+        self.c2ws = None
 
     @staticmethod
     def from_config(num_imgs: int, H0: float = 1000, W0: float = 1000,
@@ -40,9 +41,7 @@ class CamParams(nn.Module):
         phi = phi[None, :].expand(num_imgs, -1)
 
         t = torch.zeros(num_imgs, 3)
-        sx = 0.5 / np.tan((.5 * initial_fov * np.pi/180.))
-        sy = 0.5 / np.tan((.5 * initial_fov * np.pi/180.))
-        f = torch.tensor([sx, sy])
+        f = torch.tensor(1.0)
 
         if intr_repr == 'square':
             f = torch.sqrt(f)
@@ -64,6 +63,15 @@ class CamParams(nn.Module):
     def forward(self, indices: torch.Tensor):
         fx, fy = self.get_focal()
         return self.phi[indices], self.t[indices], fx, fy
+
+    def process_poses(self):
+        # self.c2ws = self.get_camera2worlds().data.clone().cpu().numpy()
+        # self.c2ws, _ = center_poses(self.c2ws[:, :3, :])
+        # self.c2ws = torch.from_numpy(self.c2ws).float()
+        self.c2ws = self.get_camera2worlds().detach()
+
+    def get_camera2world(self, idx):
+        return torch.squeeze(self.c2ws[idx], 0)
 
     def get_focal(self) -> Tuple[torch.Tensor, torch.Tensor]:
         return get_focal(self.f, self.H0, self.W0, self.intr_repr)
@@ -130,10 +138,11 @@ def get_focal(f, H, W, intr_repr='square') -> Tuple[torch.Tensor, torch.Tensor]:
         f = torch.exp(f)
     else:
         raise RuntimeError("Please choose intr_repr")
-    fx, fy = f
-    fx = fx * W
-    fy = fy * H
-    return fx, fy
+    # fx, fy = f
+    # fx = fx * W
+    # fy = fy * H
+    fx = f * W
+    return fx, fx
 
 
 def get_rotation_matrix(rot, representation='quaternion'):
@@ -165,7 +174,7 @@ def get_camera2world(rot, trans, representation='quaternion'):
 
     return homo_m # [...,4,4]
 
-
+'''
 def get_rays(
         rot: torch.Tensor,
         trans: torch.Tensor,
@@ -175,22 +184,6 @@ def get_rays(
         N_rays: int = -1,
         representation='quaternion',
         center_x = None, center_y = None):
-    '''
-        < opencv / colmap convention, standard pinhole camera >
-        the camera is facing [+z] direction, x right, y downwards
-                    z
-                   ↗
-                  /
-                 /
-                o------> x
-                |
-                |
-                |
-                ↓ 
-                y
-
-    :return:
-    '''
 
     if center_x is None:
         center_x = W/2.
@@ -219,16 +212,19 @@ def get_rays(
     dirs = torch.stack(
         [
             (i - center_x) / focal_x,
-            (j - center_y) / focal_y,
-            torch.ones_like(i, device=device),
+            -(j - center_y) / focal_y,
+            -torch.ones_like(i, device=device),
         ],
-        -1,
+        -1
     )  # axes orientations : x right, y downwards, z positive
-
+    c2ws = get_camera2world(rot, trans, representation)
+    rays_d = dirs @ c2ws[..., :3, :3].T.to(device) # (..., N-rays, 3)
+    rays_d = rays_d / torch.norm(rays_d, dim=-1, keepdim=True)
+    # The origin of all rays is the camera origin in world coordinate
+    rays_o = c2ws[..., :3, 3].expand_as(rays_d).to(device) # (..., N-rays, 3)
     # ---------
     # Translate camera frame's origin to the world frame. It is the origin of all rays.
     # ---------
-
     if representation == 'quaternion':
         # rot: [..., 4]
         # trans: [..., 3]
@@ -242,7 +238,7 @@ def get_rays(
         # trans: [..., 3]
         assert rot.shape[-1] == 3
         ## pytorch 3d implementation: axis-angle --> quaternion -->matrix
-        rot_m = tr3d.axis_angle_to_matrix(rot)  # [..., 3, 3]
+        rot_m = angle_axis_to_rotation_matrix(rot)  # [..., 3, 3]
         # rotation: matrix multiplication
         rays_d = torch.sum(
             # [..., N_rays, 1, 3] * [..., 1, 3, 3]
@@ -266,9 +262,9 @@ def get_rays(
 
     # [..., N_rays, 3]
     return rays_o, rays_d, select_inds
+'''
 
-
-def get_rays_colmap(
+def get_rays(
         device,
         c2w: torch.Tensor,
         focal_x: torch.Tensor, focal_y: torch.Tensor,
@@ -302,17 +298,17 @@ def get_rays_colmap(
             -(j - center_y) / focal_y,
             -torch.ones_like(i, device=device),
         ],
-        -1,
+        -1
     )  # axes orientations : x right, y downwards, z positive
 
     # ---------
     # Translate camera frame's origin to the world frame. It is the origin of all rays.
     # ---------
 
-    rays_d = dirs @ c2w[:, :3].T.to(device) # (..., N-rays, 3)
+    rays_d = dirs @ c2w[..., :3, :3].T.to(device) # (..., N-rays, 3)
     rays_d = rays_d / torch.norm(rays_d, dim=-1, keepdim=True)
     # The origin of all rays is the camera origin in world coordinate
-    rays_o = c2w[:, 3].expand_as(rays_d).to(device) # (..., N-rays, 3)
+    rays_o = c2w[..., :3, 3].expand_as(rays_d).to(device) # (..., N-rays, 3)
 
     # [..., N_rays, 3]
     return rays_o, rays_d, select_inds
@@ -371,4 +367,3 @@ def plot_cam_rot(cam_param: CamParams, representation: str ='quaternion', about=
     r1, r2 = euler[..., i0].numpy(), euler[..., i1].numpy()
     ax.plot(r1, r2, '^-')
     return fig
-

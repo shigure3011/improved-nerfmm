@@ -6,7 +6,7 @@ from dataio.dataset import NeRFMMDataset, ColmapDataset, get_ndc_rays
 from models.frameworks import create_model
 from models.volume_rendering import volume_render
 from models.perceptual_model import get_perceptual_loss
-from models.cam_params import CamParams, get_rays, plot_cam_rot, plot_cam_trans, get_rays_colmap
+from models.cam_params import CamParams, get_rays, plot_cam_rot, plot_cam_trans, get_camera2world
 
 import os
 import time
@@ -261,11 +261,11 @@ def main_function(args):
         
         #############################################################
         if stage == 'pre':
-            render_kwargs_train['N_samples'] = 128
-            render_kwargs_train['N_importance'] = 0
+            render_kwargs_train['N_samples'] = render_kwargs_test['N_samples'] = 128
+            render_kwargs_train['N_importance'] = render_kwargs_test['N_importance'] = 0  
         else:
-            render_kwargs_train['N_samples'] = 64
-            render_kwargs_train['N_importance'] = 128
+            render_kwargs_train['N_samples'] = render_kwargs_test['N_samples'] = 64
+            render_kwargs_train['N_importance'] = render_kwargs_test['N_importance'] = 128
 
         args.model.N_importance = render_kwargs_train['N_importance']
         #############################################################
@@ -273,35 +273,35 @@ def main_function(args):
         with tqdm(range(num_ep), desc=stage_desc) as pbar:
             pbar.update(epoch_idx - ep_offset)
             while epoch_idx - ep_offset < num_ep:
+                flags = False
                 local_epoch_idx = epoch_idx  - ep_offset
                 pbar.update()
                 # print('Start epoch {}'.format(local_epoch_idx))
                 # with tqdm(dataloader) as pbar:
                 for ind, img, c2w, focal, bound in dataloader:
+                    fx = fy = focal
+
                     if stage == 'train' and ind % valid_every_nth == 0:
                         continue
 
                     t_it = time.time()
                     it += 1
-                    pbar.set_postfix(it=it, ep=epoch_idx)
+                    pbar.set_postfix(it=it, ep=epoch_idx)                  
 
                     if not args.data.colmap:
-                        R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
+                        if stage == 'pre':
+                            R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
+                            c2w = get_camera2world(R, t, cam_param.so3_repr)
+                        else:
+                            fx, fy = cam_param.get_focal()
+                            c2w = cam_param.get_camera2world(ind.to(device).squeeze(-1))
 
-                        # [(B,) N_rays, 3], [(B,) N_rays, 3], [(B,) N_rays]
-                        rays_o, rays_d, select_inds = get_rays(
-                            R, t, fx, fy, dataset.H, dataset.W,
-                            args.data.N_rays,
-                            representation=so3_representation)
-
-                    else:
-                        rays_o, rays_d, select_inds = get_rays_colmap(
-                            device,
-                            c2w, focal, focal, dataset.H, dataset.W,
-                            args.data.N_rays)
-                        
-                        rays_o, rays_d = get_ndc_rays(dataset.H, dataset.W, 
-                                                      focal, 1.0, rays_o, rays_d)
+                    rays_o, rays_d, select_inds = get_rays(
+                        device,
+                        c2w, fx, fy, dataset.H, dataset.W,
+                        args.data.N_rays)
+                    rays_o, rays_d = get_ndc_rays(dataset.H, dataset.W, 
+                                                  fx, fy, 1.0, rays_o, rays_d)
 
                     # [(B,) N_rays, 3]
                     target_rgb = torch.gather(img.to(device), -2, torch.stack(3*[select_inds],-1)) 
@@ -320,6 +320,10 @@ def main_function(args):
                         # print("{}:{} - > {}".format(k, v.shape, v.mean().shape))
                         losses[k] = torch.mean(v)
 
+                    if not flags and do_val(local_epoch_idx):
+                        print('Train losses: ', losses['total'].item())
+                        flags = True
+                        
                     optimizer_nerf.zero_grad()
                     # optimizer_param.zero_grad()
                     optimizer_intr.zero_grad()
@@ -372,6 +376,13 @@ def main_function(args):
                         # this will be used for plotting
                         logger.save_stats('stats.p')
                         t0 = time.time()
+                
+                if (stage == 'pre' and num_ep == epoch_idx + 1):
+                    print('Saving checkpoint...')
+                    checkpoint_io.save(
+                        filename='latest.pt'.format(it),
+                        global_step=it + 1, epoch_idx=epoch_idx)
+                    logger.save_stats('stats.p')
 
                 #----------------
                 # things to do each epoch
@@ -412,23 +423,21 @@ def main_function(args):
                             if ind % valid_every_nth != 0:
                                 continue
 
+                            fx = fy = focal
                             if not args.data.colmap:
-                                R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
+                                if stage == 'pre':
+                                    R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
+                                    c2w = get_camera2world(R, t, cam_param.so3_repr)
+                                else:
+                                    fx, fy = cam_param.get_focal()
+                                    c2w = cam_param.get_camera2world(ind.to(device).squeeze(-1))
 
-                                # [N_rays, 3], [N_rays, 3], [N_rays]
-                                # when logging val images, scale the resolution to be 1/16 just to save time.
-                                rays_o, rays_d, select_inds = get_rays(
-                                    R, t, fx, fy, dataset.H, dataset.W, -1,
-                                    representation=so3_representation)
-
-                            else:
-                                rays_o, rays_d, select_inds = get_rays_colmap(
-                                    device,
-                                    c2w, focal, focal, dataset.H, dataset.W,
-                                    -1)                                
-
-                                rays_o, rays_d = get_ndc_rays(dataset.H, dataset.W, 
-                                                              focal, 1.0, rays_o, rays_d)
+                            rays_o, rays_d, select_inds = get_rays(
+                                device,
+                                c2w, fx, fy, dataset.H, dataset.W,
+                                -1)
+                            rays_o, rays_d = get_ndc_rays(dataset.H, dataset.W, 
+                                                          fx, fy, 1.0, rays_o, rays_d)
 
                             # [N_rays, 3]
                             target_rgb = img.to(device)
@@ -447,7 +456,7 @@ def main_function(args):
                             psnr.append(met_psnr(pred, gt))
                     
                     logger.add('val', 'psnr', sum(psnr) / len(psnr), it=it)
-                    print('Iter {0}: {1}'.format(it, sum(psnr) / len(psnr)))
+                    print('Val psnr: {0}'.format(sum(psnr) / len(psnr)))
                     logger.add_imgs(to_img(val_rgb), 'val/pred', it)
                     logger.add_imgs(to_img(target_rgb), 'val/gt', it)
                     logger.add_imgs(to_img(val_extras['disp_map'].unsqueeze(-1)), 'val/pred_disp', it)
@@ -467,23 +476,21 @@ def main_function(args):
                             if ind % valid_every_nth != 0:
                                 continue
 
+                            fx = fy = focal
                             if not args.data.colmap:
-                                R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
+                                if stage == 'pre':
+                                    R, t, fx, fy = cam_param(ind.to(device).squeeze(-1))
+                                    c2w = get_camera2world(R, t, cam_param.so3_repr)
+                                else:
+                                    fx, fy = cam_param.get_focal()
+                                    c2w = cam_param.get_camera2world(ind.to(device).squeeze(-1))
 
-                                # [N_rays, 3], [N_rays, 3], [N_rays]
-                                # when logging val images, scale the resolution to be 1/16 just to save time.
-                                rays_o, rays_d, select_inds = get_rays(
-                                    R, t, fx, fy, dataset.H, dataset.W, -1,
-                                    representation=so3_representation)
-
-                            else:
-                                rays_o, rays_d, select_inds = get_rays_colmap(
-                                    device,
-                                    c2w, focal, focal, dataset.H, dataset.W,
-                                    -1)
-
-                                rays_o, rays_d = get_ndc_rays(dataset.H, dataset.W, 
-                                                              focal, 1.0, rays_o, rays_d)
+                            rays_o, rays_d, select_inds = get_rays(
+                                device,
+                                c2w, fx, fy, dataset.H, dataset.W,
+                                -1)
+                            rays_o, rays_d = get_ndc_rays(dataset.H, dataset.W, 
+                                                          fx, fy, 1.0, rays_o, rays_d)
 
                             # [N_rays, 3]
                             target_rgb = img.to(device)
@@ -510,7 +517,6 @@ def main_function(args):
                     logger.add('test', 'ssim', sum(ssim) / len(ssim), it=it)
                     logger.add('test', 'lpips', sum(lpips) / len(lpips), it=it)
                     
-
                 #-------------------
                 # novel view synthesis
                 #-------------------
@@ -581,6 +587,8 @@ def main_function(args):
     # freeze all camera parameters
     for param in cam_param.parameters():
         param.requires_grad = False
+
+    cam_param.process_poses()
 
     train(args.training.num_epoch, 'train', ep_offset=num_epoch_pre)
 
