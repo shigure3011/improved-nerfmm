@@ -306,7 +306,7 @@ def get_rays(
     # ---------
 
     rays_d = dirs @ c2w[..., :3, :3].T.to(device) # (..., N-rays, 3)
-    rays_d = rays_d / torch.norm(rays_d, dim=-1, keepdim=True)
+    # rays_d = rays_d / torch.norm(rays_d, dim=-1, keepdim=True)
     # The origin of all rays is the camera origin in world coordinate
     rays_o = c2w[..., :3, 3].expand_as(rays_d).to(device) # (..., N-rays, 3)
 
