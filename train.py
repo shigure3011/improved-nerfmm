@@ -37,7 +37,7 @@ def visualize_depth(x):
     x = torch.nan_to_num(x) # change nan to 0
     mi = x.min() # get minimum depth
     ma = x.max()
-    x = (x-mi)/(ma-mi+1e-8) # normalize to 0~1
+    x = 1 - (x-mi)/(ma-mi+1e-8) # normalize to 0~1
     return x
 
 
