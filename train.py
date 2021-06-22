@@ -30,7 +30,7 @@ def mse_loss(source, target):
     return torch.mean(value)
 
 
-def visualize_depth(x, cmap=cv2.COLORMAP_JET):
+def visualize_depth(x):
     """
     depth: (H, W)
     """
