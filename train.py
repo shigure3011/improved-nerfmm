@@ -30,19 +30,15 @@ def mse_loss(source, target):
     return torch.mean(value)
 
 
-def visualize_depth(depth, cmap=cv2.COLORMAP_JET):
+def visualize_depth(x, cmap=cv2.COLORMAP_JET):
     """
     depth: (H, W)
     """
-    x = depth.cpu().numpy()
-    x = np.nan_to_num(x) # change nan to 0
-    mi = np.min(x) # get minimum depth
-    ma = np.max(x)
+    x = torch.nan_to_num(x) # change nan to 0
+    mi = x.min() # get minimum depth
+    ma = x.max()
     x = (x-mi)/(ma-mi+1e-8) # normalize to 0~1
-    x = (255*x).astype(np.uint8)
-    x_ = Image.fromarray(cv2.applyColorMap(x, cmap))
-    x_ = T.ToTensor()(x_) # (3, H, W)
-    return x_
+    return x
 
 
 class NeRFMinusMinusTrainer(nn.Module):
@@ -476,7 +472,7 @@ def main_function(args):
                     logger.add_imgs(to_img(val_rgb), 'val/pred', it)
                     logger.add_imgs(to_img(target_rgb), 'val/gt', it)
                     logger.add_imgs(to_img(val_extras['disp_map'].unsqueeze(-1)), 'val/pred_disp', it)
-                    logger.add_imgs(to_img(val_depth.unsqueeze(-1)), 'val/pred_depth', it)
+                    logger.add_imgs(visualize_depth(to_img(val_depth.unsqueeze(-1))), 'val/pred_depth', it)
                     logger.add_imgs(to_img(val_extras['acc_map'].unsqueeze(-1)), 'val/pred_acc', it)
 
 
